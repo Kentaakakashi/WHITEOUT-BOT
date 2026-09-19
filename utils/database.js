@@ -369,7 +369,7 @@ async function writeLog(
 
 /*
 |--------------------------------------------------------------------------
-| War Data
+| War Snapshot / History
 |--------------------------------------------------------------------------
 */
 
@@ -405,13 +405,6 @@ function makeWarDocumentId(
     );
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Live War Snapshots
-|--------------------------------------------------------------------------
-*/
-
 async function saveWarSnapshot(
     war
 ) {
@@ -440,13 +433,6 @@ async function saveWarSnapshot(
 
     return documentId;
 }
-
-
-/*
-|--------------------------------------------------------------------------
-| Permanent War History
-|--------------------------------------------------------------------------
-*/
 
 async function saveWarHistory(
     war
@@ -511,6 +497,550 @@ async function getRecentWarHistory(
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| War Management
+|--------------------------------------------------------------------------
+*/
+
+function makeManagementWarId(
+    war
+) {
+
+    const start =
+        String(
+            war?.startTime ||
+            "unknown"
+        )
+            .replace(
+                /[^a-zA-Z0-9_-]/g,
+                ""
+            );
+
+    const end =
+        String(
+            war?.endTime ||
+            "unknown"
+        )
+            .replace(
+                /[^a-zA-Z0-9_-]/g,
+                ""
+            );
+
+    return (
+        `${start}-${end}`
+    ).slice(
+        0,
+        140
+    );
+}
+
+function makeTargetId(
+    warId,
+    mapPosition
+) {
+
+    return (
+        `${warId}-target-${Number(
+            mapPosition
+        )}`
+    ).slice(
+        0,
+        150
+    );
+}
+
+async function getWarTarget(
+    war,
+    mapPosition
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const targetId =
+        makeTargetId(
+            warId,
+            mapPosition
+        );
+
+    const snapshot =
+        await getDatabase()
+            .collection("warTargets")
+            .doc(targetId)
+            .get();
+
+    if (!snapshot.exists) {
+        return null;
+    }
+
+    return {
+        id: snapshot.id,
+        ...snapshot.data()
+    };
+}
+
+async function getWarTargets(
+    war
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const snapshot =
+        await getDatabase()
+            .collection("warTargets")
+            .where(
+                "warId",
+                "==",
+                warId
+            )
+            .get();
+
+    return snapshot.docs.map(
+        doc => ({
+            id: doc.id,
+            ...doc.data()
+        })
+    );
+}
+
+async function claimWarTarget(
+    war,
+    mapPosition,
+    user
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const targetId =
+        makeTargetId(
+            warId,
+            mapPosition
+        );
+
+    const ref =
+        getDatabase()
+            .collection("warTargets")
+            .doc(targetId);
+
+    return getDatabase().runTransaction(
+        async transaction => {
+
+            const snapshot =
+                await transaction.get(
+                    ref
+                );
+
+            if (
+                snapshot.exists
+            ) {
+
+                const existing =
+                    snapshot.data();
+
+                if (
+                    existing.status ===
+                    "claimed" &&
+                    existing.claimedById !==
+                    user.id
+                ) {
+
+                    throw new Error(
+                        `Target #${mapPosition} is already claimed by ${existing.claimedByName}.`
+                    );
+                }
+
+                if (
+                    existing.status ===
+                    "completed"
+                ) {
+
+                    throw new Error(
+                        `Target #${mapPosition} has already been completed.`
+                    );
+                }
+            }
+
+            const data = {
+                warId,
+
+                mapPosition:
+                    Number(
+                        mapPosition
+                    ),
+
+                status:
+                    "claimed",
+
+                claimedById:
+                    user.id,
+
+                claimedByName:
+                    user.globalName ||
+                    user.username,
+
+                claimedAt:
+                    admin.firestore
+                        .FieldValue
+                        .serverTimestamp(),
+
+                updatedAt:
+                    admin.firestore
+                        .FieldValue
+                        .serverTimestamp()
+            };
+
+            transaction.set(
+                ref,
+                data,
+                {
+                    merge: true
+                }
+            );
+
+            return {
+                id: targetId,
+                ...data
+            };
+        }
+    );
+}
+
+async function releaseWarTarget(
+    war,
+    mapPosition,
+    userId,
+    force = false
+) {
+
+    const target =
+        await getWarTarget(
+            war,
+            mapPosition
+        );
+
+    if (!target) {
+        return false;
+    }
+
+    if (
+        !force &&
+        target.claimedById !==
+        userId
+    ) {
+        throw new Error(
+            "You can only release a target you claimed."
+        );
+    }
+
+    if (
+        target.status ===
+        "completed"
+    ) {
+        throw new Error(
+            "A completed target cannot be released."
+        );
+    }
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const targetId =
+        makeTargetId(
+            warId,
+            mapPosition
+        );
+
+    await getDatabase()
+        .collection("warTargets")
+        .doc(targetId)
+        .set(
+            {
+                status:
+                    "available",
+
+                claimedById:
+                    null,
+
+                claimedByName:
+                    null,
+
+                claimedAt:
+                    null,
+
+                updatedAt:
+                    admin.firestore
+                        .FieldValue
+                        .serverTimestamp()
+            },
+            {
+                merge: true
+            }
+        );
+
+    return true;
+}
+
+async function saveWarAttackResult(
+    war,
+    mapPosition,
+    result
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const targetId =
+        makeTargetId(
+            warId,
+            mapPosition
+        );
+
+    const targetRef =
+        getDatabase()
+            .collection("warTargets")
+            .doc(targetId);
+
+    const attackRef =
+        getDatabase()
+            .collection("warAttacks")
+            .doc();
+
+    const targetSnapshot =
+        await targetRef.get();
+
+    if (!targetSnapshot.exists) {
+        throw new Error(
+            "This target has not been claimed."
+        );
+    }
+
+    const target =
+        targetSnapshot.data();
+
+    if (
+        target.status !==
+        "claimed"
+    ) {
+        throw new Error(
+            "This target is not currently claimed."
+        );
+    }
+
+    if (
+        target.claimedById !==
+        result.discordUserId
+    ) {
+        throw new Error(
+            "Only the member who claimed this target can record its result."
+        );
+    }
+
+    const attackData = {
+
+        warId,
+
+        targetId,
+
+        mapPosition:
+            Number(
+                mapPosition
+            ),
+
+        discordUserId:
+            result.discordUserId,
+
+        discordUserName:
+            result.discordUserName,
+
+        stars:
+            Number(
+                result.stars
+            ),
+
+        destructionPercentage:
+            Number(
+                result.destructionPercentage
+            ),
+
+        recordedAt:
+            admin.firestore
+                .FieldValue
+                .serverTimestamp()
+    };
+
+    await attackRef.set(
+        attackData
+    );
+
+    await targetRef.set(
+        {
+            status:
+                "completed",
+
+            resultStars:
+                Number(
+                    result.stars
+                ),
+
+            resultDestruction:
+                Number(
+                    result.destructionPercentage
+                ),
+
+            resultAttackId:
+                attackRef.id,
+
+            completedById:
+                result.discordUserId,
+
+            completedByName:
+                result.discordUserName,
+
+            completedAt:
+                admin.firestore
+                    .FieldValue
+                    .serverTimestamp(),
+
+            updatedAt:
+                admin.firestore
+                    .FieldValue
+                    .serverTimestamp()
+        },
+        {
+            merge: true
+        }
+    );
+
+    return {
+        id:
+            attackRef.id,
+
+        ...attackData
+    };
+}
+
+async function getWarAttackHistory(
+    war
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const snapshot =
+        await getDatabase()
+            .collection("warAttacks")
+            .where(
+                "warId",
+                "==",
+                warId
+            )
+            .get();
+
+    return snapshot.docs.map(
+        doc => ({
+            id: doc.id,
+            ...doc.data()
+        })
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Admin Assignment
+|--------------------------------------------------------------------------
+*/
+
+async function assignWarTarget(
+    war,
+    mapPosition,
+    discordUserId,
+    discordUserName
+) {
+
+    const warId =
+        makeManagementWarId(
+            war
+        );
+
+    const targetId =
+        makeTargetId(
+            warId,
+            mapPosition
+        );
+
+    const ref =
+        getDatabase()
+            .collection("warTargets")
+            .doc(targetId);
+
+    const existing =
+        await ref.get();
+
+    if (
+        existing.exists &&
+        existing.data().status ===
+        "completed"
+    ) {
+        throw new Error(
+            "That target has already been completed."
+        );
+    }
+
+    await ref.set(
+        {
+            warId,
+
+            mapPosition:
+                Number(
+                    mapPosition
+                ),
+
+            status:
+                "claimed",
+
+            claimedById:
+                discordUserId,
+
+            claimedByName:
+                discordUserName,
+
+            assignedByAdmin:
+                true,
+
+            assignedAt:
+                admin.firestore
+                    .FieldValue
+                    .serverTimestamp(),
+
+            updatedAt:
+                admin.firestore
+                    .FieldValue
+                    .serverTimestamp()
+        },
+        {
+            merge: true
+        }
+    );
+
+    return true;
+}
+
 module.exports = {
 
     admin,
@@ -539,5 +1069,13 @@ module.exports = {
 
     saveWarSnapshot,
     saveWarHistory,
-    getRecentWarHistory
+    getRecentWarHistory,
+
+    getWarTarget,
+    getWarTargets,
+    claimWarTarget,
+    releaseWarTarget,
+    saveWarAttackResult,
+    getWarAttackHistory,
+    assignWarTarget
 };
