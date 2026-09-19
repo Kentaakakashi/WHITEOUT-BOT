@@ -6,7 +6,9 @@ const path = require("path");
 const {
     Client,
     Collection,
-    GatewayIntentBits
+    GatewayIntentBits,
+    REST,
+    Routes
 } = require("discord.js");
 
 const {
@@ -48,6 +50,7 @@ const {
     initializeInactivitySystem
 } = require("./systems/inactivitySystem");
 
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -57,6 +60,7 @@ const client = new Client({
 
 client.commands =
     new Collection();
+
 
 /*
 |--------------------------------------------------------------------------
@@ -78,6 +82,7 @@ function loadCommands(directory) {
         );
 
     for (const entry of entries) {
+
         const fullPath =
             path.join(
                 directory,
@@ -85,10 +90,7 @@ function loadCommands(directory) {
             );
 
         if (entry.isDirectory()) {
-            loadCommands(
-                fullPath
-            );
-
+            loadCommands(fullPath);
             continue;
         }
 
@@ -97,6 +99,7 @@ function loadCommands(directory) {
         }
 
         try {
+
             const command =
                 require(fullPath);
 
@@ -104,6 +107,7 @@ function loadCommands(directory) {
                 !command.data ||
                 !command.execute
             ) {
+
                 logger.warn(
                     `Skipped invalid command: ${fullPath}`
                 );
@@ -119,7 +123,9 @@ function loadCommands(directory) {
             logger.info(
                 `Loaded command: /${command.data.name}`
             );
+
         } catch (error) {
+
             logger.error(
                 `Failed loading command: ${fullPath}`
             );
@@ -129,6 +135,7 @@ function loadCommands(directory) {
     }
 }
 
+
 /*
 |--------------------------------------------------------------------------
 | Load Events
@@ -136,6 +143,7 @@ function loadCommands(directory) {
 */
 
 function loadEvents(directory) {
+
     if (!fs.existsSync(directory)) {
         return;
     }
@@ -146,6 +154,7 @@ function loadEvents(directory) {
         );
 
     for (const file of files) {
+
         if (!file.endsWith(".js")) {
             continue;
         }
@@ -157,6 +166,7 @@ function loadEvents(directory) {
             );
 
         try {
+
             const event =
                 require(fullPath);
 
@@ -164,6 +174,7 @@ function loadEvents(directory) {
                 !event.name ||
                 !event.execute
             ) {
+
                 logger.warn(
                     `Skipped invalid event: ${fullPath}`
                 );
@@ -172,6 +183,7 @@ function loadEvents(directory) {
             }
 
             if (event.once) {
+
                 client.once(
                     event.name,
                     (...args) =>
@@ -180,7 +192,9 @@ function loadEvents(directory) {
                             client
                         )
                 );
+
             } else {
+
                 client.on(
                     event.name,
                     (...args) =>
@@ -194,7 +208,9 @@ function loadEvents(directory) {
             logger.info(
                 `Loaded event: ${event.name}`
             );
+
         } catch (error) {
+
             logger.error(
                 `Failed loading event: ${fullPath}`
             );
@@ -204,6 +220,97 @@ function loadEvents(directory) {
     }
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| Automatically Register Slash Commands
+|--------------------------------------------------------------------------
+*/
+
+async function registerCommands() {
+
+    if (!process.env.DISCORD_TOKEN) {
+        throw new Error(
+            "DISCORD_TOKEN is missing."
+        );
+    }
+
+    if (!process.env.DISCORD_CLIENT_ID) {
+        throw new Error(
+            "DISCORD_CLIENT_ID is missing."
+        );
+    }
+
+    if (!process.env.DISCORD_GUILD_ID) {
+        throw new Error(
+            "DISCORD_GUILD_ID is missing."
+        );
+    }
+
+    const commands = [];
+
+    for (
+        const command
+        of client.commands.values()
+    ) {
+
+        try {
+
+            commands.push(
+                command.data.toJSON()
+            );
+
+        } catch (error) {
+
+            logger.error(
+                `Failed converting /${command.data.name} to JSON.`
+            );
+
+            logger.error(error);
+        }
+    }
+
+    logger.info(
+        `Registering ${commands.length} slash command(s)...`
+    );
+
+    const rest =
+        new REST({
+            version: "10"
+        }).setToken(
+            process.env.DISCORD_TOKEN
+        );
+
+    try {
+
+        const registered =
+            await rest.put(
+                Routes.applicationGuildCommands(
+                    process.env.DISCORD_CLIENT_ID,
+                    process.env.DISCORD_GUILD_ID
+                ),
+                {
+                    body: commands
+                }
+            );
+
+        logger.info(
+            `Successfully registered ${registered.length} slash command(s).`
+        );
+
+    } catch (error) {
+
+        logger.error(
+            "Failed to register slash commands."
+        );
+
+        logger.error(error);
+
+        throw error;
+    }
+}
+
+
 /*
 |--------------------------------------------------------------------------
 | Initialize Systems
@@ -211,6 +318,7 @@ function loadEvents(directory) {
 */
 
 async function initializeSystems() {
+
     await initializeWarSystem(
         client
     );
@@ -244,6 +352,7 @@ async function initializeSystems() {
     );
 }
 
+
 /*
 |--------------------------------------------------------------------------
 | Startup
@@ -251,10 +360,19 @@ async function initializeSystems() {
 */
 
 async function start() {
+
     try {
+
         logger.info(
             "Starting WHITEOUT BOT..."
         );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Load Commands
+        |--------------------------------------------------------------------------
+        */
 
         loadCommands(
             path.join(
@@ -263,6 +381,13 @@ async function start() {
             )
         );
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Load Events
+        |--------------------------------------------------------------------------
+        */
+
         loadEvents(
             path.join(
                 __dirname,
@@ -270,11 +395,42 @@ async function start() {
             )
         );
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Database
+        |--------------------------------------------------------------------------
+        */
+
         await initializeDatabase();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Automatically Register Commands
+        |--------------------------------------------------------------------------
+        */
+
+        await registerCommands();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Initialize Systems
+        |--------------------------------------------------------------------------
+        */
 
         await initializeSystems();
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Login
+        |--------------------------------------------------------------------------
+        */
+
         if (!process.env.DISCORD_TOKEN) {
+
             throw new Error(
                 "DISCORD_TOKEN is missing."
             );
@@ -283,7 +439,9 @@ async function start() {
         await client.login(
             process.env.DISCORD_TOKEN
         );
+
     } catch (error) {
+
         logger.error(
             "Whiteout failed to start."
         );
@@ -293,5 +451,6 @@ async function start() {
         process.exit(1);
     }
 }
+
 
 start();
