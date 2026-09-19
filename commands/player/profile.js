@@ -7,112 +7,99 @@ const {
 } = require("../../utils/cocApi");
 
 const {
-    baseEmbed,
+    getPlayerLink,
+    savePlayerSnapshot
+} = require("../../utils/database");
+
+const {
+    playerEmbed,
     errorEmbed
 } = require("../../utils/embeds");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("player")
-        .setDescription("Whiteout player information.")
+        .setDescription(
+            "Whiteout player information."
+        )
         .addSubcommand(subcommand =>
             subcommand
                 .setName("profile")
-                .setDescription("View a Clash of Clans player profile.")
+                .setDescription(
+                    "View a Clash of Clans player profile."
+                )
                 .addStringOption(option =>
                     option
                         .setName("tag")
                         .setDescription(
-                            "Clash of Clans player tag, e.g. #ABC123"
+                            "Player tag. Leave empty to use your linked account."
                         )
-                        .setRequired(true)
+                        .setRequired(false)
                 )
         ),
 
     async execute(interaction) {
-        const tag =
-            interaction.options.getString("tag");
-
-        await interaction.deferReply();
+        let tag =
+            interaction.options.getString(
+                "tag"
+            );
 
         try {
-            const player = await getPlayer(tag);
+            if (!tag) {
+                const link =
+                    await getPlayerLink(
+                        interaction.user.id
+                    );
 
-            const heroes = player.heroes || [];
+                if (!link?.playerTag) {
+                    return interaction.reply({
+                        embeds: [
+                            errorEmbed(
+                                "You don't have a linked Clash of Clans account.\n\nUse `/link player` first, or provide a player tag."
+                            )
+                        ],
+                        ephemeral: true
+                    });
+                }
 
-            const heroText =
-                heroes.length > 0
-                    ? heroes
-                        .map(
-                            hero =>
-                                `${hero.name}: ${hero.level}/${hero.maxLevel}`
-                        )
-                        .join("\n")
-                    : "No hero data available.";
-
-            const embed = baseEmbed()
-                .setTitle(`${player.name}`)
-                .setDescription(
-                    `Clash of Clans player profile\n\`${player.tag}\``
-                )
-                .addFields(
-                    {
-                        name: "🏰 Town Hall",
-                        value: `${player.townHallLevel ?? "Unknown"}`,
-                        inline: true
-                    },
-                    {
-                        name: "⭐ XP Level",
-                        value: `${player.expLevel ?? "Unknown"}`,
-                        inline: true
-                    },
-                    {
-                        name: "🏆 Trophies",
-                        value: `${player.trophies ?? 0}`,
-                        inline: true
-                    },
-                    {
-                        name: "⚔️ War Stars",
-                        value: `${player.achievements?.find(
-                            achievement =>
-                                achievement.name ===
-                                "War League Legend"
-                        )?.value ?? "—"}`,
-                        inline: true
-                    },
-                    {
-                        name: "💰 Donations",
-                        value: `${player.donations ?? 0}`,
-                        inline: true
-                    },
-                    {
-                        name: "🏅 League",
-                        value: player.league?.name || "Unranked",
-                        inline: true
-                    },
-                    {
-                        name: "🦸 Heroes",
-                        value: heroText,
-                        inline: false
-                    }
-                );
-
-            if (player.league?.iconUrls?.medium) {
-                embed.setThumbnail(
-                    player.league.iconUrls.medium
-                );
+                tag = link.playerTag;
             }
 
+            await interaction.deferReply();
+
+            const player =
+                await getPlayer(tag);
+
+            await savePlayerSnapshot(
+                player
+            );
+
             await interaction.editReply({
-                embeds: [embed]
+                embeds: [
+                    playerEmbed(player)
+                ]
             });
         } catch (error) {
-            await interaction.editReply({
+            if (
+                interaction.deferred ||
+                interaction.replied
+            ) {
+                return interaction.editReply({
+                    embeds: [
+                        errorEmbed(
+                            `Could not retrieve that player.\n\n**Reason:** ${error.message}`
+                        )
+                    ]
+                });
+            }
+
+            return interaction.reply({
                 embeds: [
                     errorEmbed(
                         `Could not retrieve that player.\n\n**Reason:** ${error.message}`
                     )
-                ]
+                ],
+                ephemeral: true
             });
         }
     }
