@@ -1,4 +1,5 @@
-const logger = require("../utils/logger");
+const logger =
+    require("../utils/logger");
 
 const {
     getCurrentWar,
@@ -8,12 +9,22 @@ const {
 const {
     saveWarSnapshot,
     saveWarHistory,
-    getRecentWarHistory
+    getRecentWarHistory,
+
+    getWarTargets,
+    getWarTarget,
+    claimWarTarget,
+    releaseWarTarget,
+    saveWarAttackResult,
+    getWarAttackHistory,
+    assignWarTarget
 } = require("../utils/database");
 
 const {
     baseEmbed,
     errorEmbed,
+    successEmbed,
+    warningEmbed,
     WHITEOUT_COLOR,
     WARNING_COLOR
 } = require("../utils/embeds");
@@ -21,77 +32,109 @@ const {
 const {
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require("discord.js");
 
-const REFRESH_INTERVAL = 60 * 1000;
+const REFRESH_INTERVAL =
+    60 * 1000;
 
 let refreshTimer = null;
+
 let lastWar = null;
+
 let lastWarError = null;
 
-const STATE_TEXT = {
-    preparation: "Preparation Day",
-    inWar: "Battle Day",
-    warEnded: "War Ended",
-    notInWar: "Not In War"
-};
 
-function cleanTag(tag) {
-    return String(tag || "")
-        .replace("#", "")
-        .toUpperCase();
-}
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
 
-function formatTimeRemaining(isoString) {
+function formatTimeRemaining(
+    isoString
+) {
+
     if (!isoString) {
         return "Unknown";
     }
 
-    const end = new Date(isoString).getTime();
+    const end =
+        new Date(
+            isoString
+        ).getTime();
 
     if (!Number.isFinite(end)) {
         return "Unknown";
     }
 
-    const difference = end - Date.now();
+    const difference =
+        end -
+        Date.now();
 
-    if (difference <= 0) {
+    if (
+        difference <= 0
+    ) {
         return "Ending / ended";
     }
 
     const totalMinutes =
-        Math.floor(difference / 60000);
+        Math.floor(
+            difference /
+            60000
+        );
 
     const days =
-        Math.floor(totalMinutes / 1440);
+        Math.floor(
+            totalMinutes /
+            1440
+        );
 
     const hours =
         Math.floor(
-            (totalMinutes % 1440) / 60
+            (totalMinutes %
+                1440) /
+            60
         );
 
     const minutes =
-        totalMinutes % 60;
+        totalMinutes %
+        60;
 
     if (days > 0) {
-        return `${days}d ${hours}h ${minutes}m`;
+        return (
+            `${days}d ${hours}h ${minutes}m`
+        );
     }
 
     if (hours > 0) {
-        return `${hours}h ${minutes}m`;
+        return (
+            `${hours}h ${minutes}m`
+        );
     }
 
     return `${minutes}m`;
 }
 
-function countAttacks(members = []) {
+function countAttacks(
+    members = []
+) {
+
     return members.reduce(
-        (total, member) => {
+        (
+            total,
+            member
+        ) => {
+
             return (
                 total +
                 (
-                    Array.isArray(member.attacks)
+                    Array.isArray(
+                        member.attacks
+                    )
                         ? member.attacks.length
                         : 0
                 )
@@ -105,9 +148,11 @@ function getAttackCapacity(
     war,
     members = []
 ) {
+
     const attacksPerMember =
         Number(
-            war?.attacksPerMember || 1
+            war?.attacksPerMember ||
+            1
         );
 
     return (
@@ -120,13 +165,18 @@ function summarizeTeam(
     war,
     team
 ) {
+
     const members =
-        Array.isArray(team?.members)
+        Array.isArray(
+            team?.members
+        )
             ? team.members
             : [];
 
     const attacksUsed =
-        countAttacks(members);
+        countAttacks(
+            members
+        );
 
     const attackCapacity =
         getAttackCapacity(
@@ -135,6 +185,7 @@ function summarizeTeam(
         );
 
     return {
+
         name:
             team?.name ||
             "Unknown",
@@ -145,7 +196,8 @@ function summarizeTeam(
 
         stars:
             Number(
-                team?.stars || 0
+                team?.stars ||
+                0
             ),
 
         destructionPercentage:
@@ -172,43 +224,46 @@ function summarizeTeam(
     };
 }
 
-function normalizeWar(war) {
+function normalizeWar(
+    war
+) {
+
     if (!war) {
+
         return {
-            state: "notInWar",
 
-            clan: null,
+            state:
+                "notInWar",
 
-            opponent: null,
+            clan:
+                null,
 
-            teamSize: 0,
+            opponent:
+                null,
 
-            attacksPerMember: 1,
+            teamSize:
+                0,
 
-            startTime: null,
+            attacksPerMember:
+                1,
 
-            endTime: null,
+            startTime:
+                null,
 
-            remainingTime: null,
+            endTime:
+                null,
+
+            remainingTime:
+                null,
 
             fetchedAt:
-                new Date().toISOString()
+                new Date()
+                    .toISOString()
         };
     }
 
-    const clan =
-        summarizeTeam(
-            war,
-            war.clan
-        );
-
-    const opponent =
-        summarizeTeam(
-            war,
-            war.opponent
-        );
-
     return {
+
         state:
             war.state ||
             "unknown",
@@ -216,7 +271,7 @@ function normalizeWar(war) {
         teamSize:
             Number(
                 war.teamSize ||
-                clan.memberCount ||
+                war.clan?.members?.length ||
                 0
             ),
 
@@ -239,20 +294,148 @@ function normalizeWar(war) {
                 war.endTime
             ),
 
-        clan,
+        clan:
+            summarizeTeam(
+                war,
+                war.clan
+            ),
 
-        opponent,
+        opponent:
+            summarizeTeam(
+                war,
+                war.opponent
+            ),
 
         fetchedAt:
-            new Date().toISOString()
+            new Date()
+                .toISOString()
     };
 }
 
-function buildCurrentWarEmbed(war) {
+
+/*
+|--------------------------------------------------------------------------
+| Live War
+|--------------------------------------------------------------------------
+*/
+
+async function fetchAndStoreCurrentWar() {
+
+    const rawWar =
+        await getCurrentWar();
+
+    const normalized =
+        normalizeWar(
+            rawWar
+        );
+
+    lastWar =
+        normalized;
+
+    lastWarError =
+        null;
+
+    await saveWarSnapshot(
+        normalized
+    );
+
+    if (
+        normalized.state ===
+        "warEnded"
+    ) {
+
+        try {
+
+            const history =
+                await getWarLog();
+
+            const latest =
+                Array.isArray(
+                    history?.items
+                )
+                    ? history.items[0]
+                    : null;
+
+            if (latest) {
+
+                await saveWarHistory(
+                    latest
+                );
+            }
+
+        } catch (error) {
+
+            logger.warn(
+                `War history refresh failed: ${error.message}`
+            );
+        }
+    }
+
+    return normalized;
+}
+
+async function getLiveWar({
+    force = false
+} = {}) {
+
+    if (
+        !force &&
+        lastWar &&
+        lastWar.fetchedAt
+    ) {
+
+        const age =
+            Date.now() -
+            new Date(
+                lastWar.fetchedAt
+            ).getTime();
+
+        if (
+            age <
+            15000
+        ) {
+            return lastWar;
+        }
+    }
+
+    try {
+
+        return await fetchAndStoreCurrentWar();
+
+    } catch (error) {
+
+        lastWarError =
+            error;
+
+        logger.error(
+            `Current war fetch failed: ${error.message}`
+        );
+
+        if (lastWar) {
+            return lastWar;
+        }
+
+        throw error;
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Current War Embed
+|--------------------------------------------------------------------------
+*/
+
+function buildCurrentWarEmbed(
+    war
+) {
+
     if (
         !war ||
-        war.state === "notInWar"
+        war.state ===
+        "notInWar"
     ) {
+
         return errorEmbed(
             "Whiteout is not currently in a war."
         );
@@ -264,10 +447,6 @@ function buildCurrentWarEmbed(war) {
     const opponent =
         war.opponent;
 
-    const state =
-        STATE_TEXT[war.state] ||
-        war.state;
-
     let result =
         "Tied";
 
@@ -275,124 +454,265 @@ function buildCurrentWarEmbed(war) {
         clan.stars >
         opponent.stars
     ) {
+
         result =
             "Whiteout ahead";
+
     } else if (
         clan.stars <
         opponent.stars
     ) {
+
         result =
             "Opponent ahead";
+
     } else if (
         clan.destructionPercentage >
         opponent.destructionPercentage
     ) {
+
         result =
             "Whiteout ahead on destruction";
+
     } else if (
         clan.destructionPercentage <
         opponent.destructionPercentage
     ) {
+
         result =
             "Opponent ahead on destruction";
     }
 
-    const embed =
-        baseEmbed()
-            .setColor(
-                war.state === "inWar"
-                    ? WHITEOUT_COLOR
-                    : WARNING_COLOR
-            )
-            .setTitle(
-                "⚔️ WHITEOUT CURRENT WAR"
-            )
-            .setDescription(
-                `**${clan.name}** vs **${opponent.name}**\n\n` +
-                `**Status:** ${state}\n` +
-                `**Current standing:** ${result}`
-            )
-            .addFields(
-                {
-                    name: "❄️ Whiteout",
-                    value:
-                        `⭐ **${clan.stars}** stars\n` +
-                        `💥 **${clan.destructionPercentage.toFixed(2)}%** destruction\n` +
-                        `⚔️ **${clan.attacksUsed}/${clan.attackCapacity}** attacks used\n` +
-                        `📌 **${clan.attacksRemaining}** attacks remaining`,
-                    inline: true
-                },
+    const stateText = {
 
-                {
-                    name: "👹 Opponent",
-                    value:
-                        `⭐ **${opponent.stars}** stars\n` +
-                        `💥 **${opponent.destructionPercentage.toFixed(2)}%** destruction\n` +
-                        `⚔️ **${opponent.attacksUsed}/${opponent.attackCapacity}** attacks used\n` +
-                        `📌 **${opponent.attacksRemaining}** attacks remaining`,
-                    inline: true
-                },
+        preparation:
+            "Preparation Day",
 
-                {
-                    name: "⏱️ Time Remaining",
-                    value:
-                        `\`${war.remainingTime}\``,
-                    inline: true
-                },
+        inWar:
+            "Battle Day",
 
-                {
-                    name: "👥 Team Size",
-                    value:
-                        `${war.teamSize}v${war.teamSize}`,
-                    inline: true
-                },
+        warEnded:
+            "War Ended"
+    };
 
-                {
-                    name: "🎯 Attacks / Member",
-                    value:
-                        `${war.attacksPerMember}`,
-                    inline: true
-                }
-            );
+    return baseEmbed()
 
-    if (clan.tag) {
-        embed.setFooter({
-            text:
-                `Whiteout ${clan.tag} • Live Clash of Clans war data`
+        .setColor(
+            war.state ===
+            "inWar"
+                ? WHITEOUT_COLOR
+                : WARNING_COLOR
+        )
+
+        .setTitle(
+            "⚔️ WHITEOUT CURRENT WAR"
+        )
+
+        .setDescription(
+            `**${clan.name}** vs **${opponent.name}**\n\n` +
+            `**Status:** ${stateText[war.state] || war.state}\n` +
+            `**Standing:** ${result}`
+        )
+
+        .addFields(
+
+            {
+                name:
+                    "❄️ Whiteout",
+
+                value:
+                    `⭐ **${clan.stars}** stars\n` +
+                    `💥 **${clan.destructionPercentage.toFixed(2)}%** destruction\n` +
+                    `⚔️ **${clan.attacksUsed}/${clan.attackCapacity}** attacks used\n` +
+                    `📌 **${clan.attacksRemaining}** remaining`,
+
+                inline:
+                    true
+            },
+
+            {
+                name:
+                    "👹 Opponent",
+
+                value:
+                    `⭐ **${opponent.stars}** stars\n` +
+                    `💥 **${opponent.destructionPercentage.toFixed(2)}%** destruction\n` +
+                    `⚔️ **${opponent.attacksUsed}/${opponent.attackCapacity}** attacks used\n` +
+                    `📌 **${opponent.attacksRemaining}** remaining`,
+
+                inline:
+                    true
+            },
+
+            {
+                name:
+                    "⏱️ Time Remaining",
+
+                value:
+                    `\`${war.remainingTime}\``,
+
+                inline:
+                    true
+            },
+
+            {
+                name:
+                    "👥 Team",
+
+                value:
+                    `${war.teamSize}v${war.teamSize}`,
+
+                inline:
+                    true
+            },
+
+            {
+                name:
+                    "🎯 Attacks / Member",
+
+                value:
+                    `${war.attacksPerMember}`,
+
+                inline:
+                    true
+            }
+        );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Current War Command
+|--------------------------------------------------------------------------
+*/
+
+async function showCurrentWar(
+    interaction
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    if (
+        war.state ===
+        "notInWar"
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "Whiteout is not currently in a war."
+                )
+            ],
+
+            ephemeral:
+                true
         });
     }
 
-    return embed;
+    return interaction.reply({
+
+        embeds: [
+            buildCurrentWarEmbed(
+                war
+            )
+        ],
+
+        components: [
+
+            new ActionRowBuilder()
+                .addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            "whiteout:war:members:0"
+                        )
+                        .setLabel(
+                            "Member Status"
+                        )
+                        .setEmoji(
+                            "👥"
+                        )
+                        .setStyle(
+                            ButtonStyle.Secondary
+                        ),
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            "whiteout:war:plan:0"
+                        )
+                        .setLabel(
+                            "Target Plan"
+                        )
+                        .setEmoji(
+                            "🎯"
+                        )
+                        .setStyle(
+                            ButtonStyle.Secondary
+                        ),
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            "whiteout:war:refresh"
+                        )
+                        .setLabel(
+                            "Refresh"
+                        )
+                        .setEmoji(
+                            "🔄"
+                        )
+                        .setStyle(
+                            ButtonStyle.Primary
+                        )
+                )
+        ],
+
+        ephemeral:
+            true
+    });
 }
+
+
+/*
+|--------------------------------------------------------------------------
+| Member Status
+|--------------------------------------------------------------------------
+*/
 
 function buildMemberStatusEmbed(
     war,
     page = 0
 ) {
+
     const members =
         [
             ...(war?.clan?.members || [])
         ].sort(
-            (a, b) => {
+            (
+                a,
+                b
+            ) => {
 
-                const aAttacks =
-                    Array.isArray(a.attacks)
+                const aa =
+                    Array.isArray(
+                        a.attacks
+                    )
                         ? a.attacks.length
                         : 0;
 
-                const bAttacks =
-                    Array.isArray(b.attacks)
+                const ba =
+                    Array.isArray(
+                        b.attacks
+                    )
                         ? b.attacks.length
                         : 0;
 
                 if (
-                    aAttacks !==
-                    bAttacks
+                    aa !== ba
                 ) {
-                    return (
-                        aAttacks -
-                        bAttacks
-                    );
+                    return aa - ba;
                 }
 
                 return (
@@ -402,7 +722,8 @@ function buildMemberStatusEmbed(
             }
         );
 
-    const pageSize = 15;
+    const pageSize =
+        15;
 
     const totalPages =
         Math.max(
@@ -485,247 +806,38 @@ function buildMemberStatusEmbed(
                         ? "✅"
                         : "⚠️";
 
-                const attackText =
-                    used
-                        ? `${used}/${capacity} • ${stars}⭐ • ${destruction.toFixed(0)}%`
-                        : `0/${capacity} • No attack`;
-
                 return (
-                    `${status} **` +
-                    `${member.mapPosition || (
-                        safePage *
-                        pageSize +
-                        index +
-                        1
-                    )}. ${member.name}**` +
+                    `${status} **${member.mapPosition || (safePage * pageSize + index + 1)}. ${member.name}**` +
                     ` — TH${member.townHallLevel || "?"}` +
-                    ` — ${attackText}`
+                    ` — ${used}/${capacity}` +
+                    ` • ${stars}⭐` +
+                    ` • ${destruction.toFixed(0)}%`
                 );
             }
         );
 
     return baseEmbed()
+
         .setTitle(
             "⚔️ WHITEOUT WAR MEMBER STATUS"
         )
+
         .setDescription(
             lines.join("\n") ||
-            "No Whiteout war members are available."
+            "No Whiteout members are available."
         )
+
         .setFooter({
             text:
                 `Page ${safePage + 1}/${totalPages} • ⚠️ = attack remaining`
         });
 }
 
-function buildMemberButtons(
-    page,
-    totalPages
-) {
-    return new ActionRowBuilder()
-        .addComponents(
-
-            new ButtonBuilder()
-                .setCustomId(
-                    `whiteout:war:members:${Math.max(
-                        0,
-                        page - 1
-                    )}`
-                )
-                .setLabel("Previous")
-                .setStyle(
-                    ButtonStyle.Secondary
-                )
-                .setDisabled(
-                    page <= 0
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "whiteout:war:refresh"
-                )
-                .setLabel("Refresh War")
-                .setEmoji("🔄")
-                .setStyle(
-                    ButtonStyle.Primary
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    `whiteout:war:members:${page + 1}`
-                )
-                .setLabel("Next")
-                .setStyle(
-                    ButtonStyle.Secondary
-                )
-                .setDisabled(
-                    page >=
-                    totalPages - 1
-                )
-        );
-}
-
-async function fetchAndStoreCurrentWar() {
-    const rawWar =
-        await getCurrentWar();
-
-    const normalized =
-        normalizeWar(
-            rawWar
-        );
-
-    lastWar =
-        normalized;
-
-    lastWarError =
-        null;
-
-    await saveWarSnapshot(
-        normalized
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Save latest completed war into permanent history
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        normalized.state ===
-        "warEnded"
-    ) {
-        try {
-            const history =
-                await getWarLog();
-
-            const latestWar =
-                Array.isArray(
-                    history?.items
-                )
-                    ? history.items[0]
-                    : null;
-
-            if (latestWar) {
-                await saveWarHistory(
-                    latestWar
-                );
-            }
-
-        } catch (error) {
-            logger.warn(
-                `War history refresh failed: ${error.message}`
-            );
-        }
-    }
-
-    return normalized;
-}
-
-async function getLiveWar({
-    force = false
-} = {}) {
-
-    if (
-        !force &&
-        lastWar &&
-        lastWar.fetchedAt
-    ) {
-        const age =
-            Date.now() -
-            new Date(
-                lastWar.fetchedAt
-            ).getTime();
-
-        if (age < 15000) {
-            return lastWar;
-        }
-    }
-
-    try {
-        return await fetchAndStoreCurrentWar();
-
-    } catch (error) {
-
-        lastWarError =
-            error;
-
-        logger.error(
-            `Current war fetch failed: ${error.message}`
-        );
-
-        if (lastWar) {
-            return lastWar;
-        }
-
-        throw error;
-    }
-}
-
-async function showCurrentWar(
-    interaction
-) {
-    const war =
-        await getLiveWar({
-            force: true
-        });
-
-    if (
-        war.state ===
-        "notInWar"
-    ) {
-        return interaction.reply({
-            embeds: [
-                errorEmbed(
-                    "Whiteout is not currently in a war."
-                )
-            ],
-            ephemeral: true
-        });
-    }
-
-    return interaction.reply({
-        embeds: [
-            buildCurrentWarEmbed(
-                war
-            )
-        ],
-        components: [
-            new ActionRowBuilder()
-                .addComponents(
-
-                    new ButtonBuilder()
-                        .setCustomId(
-                            "whiteout:war:members:0"
-                        )
-                        .setLabel(
-                            "Member Status"
-                        )
-                        .setEmoji("👥")
-                        .setStyle(
-                            ButtonStyle.Secondary
-                        ),
-
-                    new ButtonBuilder()
-                        .setCustomId(
-                            "whiteout:war:refresh"
-                        )
-                        .setLabel(
-                            "Refresh"
-                        )
-                        .setEmoji("🔄")
-                        .setStyle(
-                            ButtonStyle.Primary
-                        )
-                )
-        ],
-        ephemeral: true
-    });
-}
-
 async function showMemberStatus(
     interaction,
     page = 0
 ) {
+
     const war =
         await getLiveWar({
             force: true
@@ -735,24 +847,29 @@ async function showMemberStatus(
         war.state ===
         "notInWar"
     ) {
+
         return interaction.reply({
             embeds: [
                 errorEmbed(
                     "Whiteout is not currently in a war."
                 )
             ],
-            ephemeral: true
+
+            ephemeral:
+                true
         });
     }
+
+    const members =
+        war.clan?.members ||
+        [];
 
     const totalPages =
         Math.max(
             1,
             Math.ceil(
-                (
-                    war.clan?.members
-                        ?.length || 0
-                ) / 15
+                members.length /
+                15
             )
         );
 
@@ -766,38 +883,1040 @@ async function showMemberStatus(
         );
 
     return interaction.reply({
+
         embeds: [
             buildMemberStatusEmbed(
                 war,
                 safePage
             )
         ],
+
         components: [
             buildMemberButtons(
                 safePage,
                 totalPages
             )
         ],
-        ephemeral: true
+
+        ephemeral:
+            true
     });
 }
 
+function buildMemberButtons(
+    page,
+    totalPages
+) {
+
+    return new ActionRowBuilder()
+        .addComponents(
+
+            new ButtonBuilder()
+                .setCustomId(
+                    `whiteout:war:members:${Math.max(0, page - 1)}`
+                )
+                .setLabel(
+                    "Previous"
+                )
+                .setStyle(
+                    ButtonStyle.Secondary
+                )
+                .setDisabled(
+                    page <= 0
+                ),
+
+            new ButtonBuilder()
+                .setCustomId(
+                    "whiteout:war:refresh"
+                )
+                .setLabel(
+                    "Refresh War"
+                )
+                .setEmoji(
+                    "🔄"
+                )
+                .setStyle(
+                    ButtonStyle.Primary
+                ),
+
+            new ButtonBuilder()
+                .setCustomId(
+                    `whiteout:war:members:${page + 1}`
+                )
+                .setLabel(
+                    "Next"
+                )
+                .setStyle(
+                    ButtonStyle.Secondary
+                )
+                .setDisabled(
+                    page >=
+                    totalPages - 1
+                )
+        );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| TARGET PLANNING
+|--------------------------------------------------------------------------
+*/
+
+function getTargetMember(
+    war,
+    mapPosition
+) {
+
+    return (
+        war?.opponent?.members ||
+        []
+    ).find(
+        member =>
+            Number(
+                member.mapPosition
+            ) ===
+            Number(
+                mapPosition
+            )
+    );
+}
+
+function getTargetStatus(
+    targets,
+    mapPosition
+) {
+
+    return (
+        targets.find(
+            target =>
+                Number(
+                    target.mapPosition
+                ) ===
+                Number(
+                    mapPosition
+                )
+        ) ||
+        null
+    );
+}
+
+function buildWarPlanEmbed(
+    war,
+    targets,
+    page = 0
+) {
+
+    const opponents =
+        [
+            ...(war?.opponent?.members || [])
+        ].sort(
+            (
+                a,
+                b
+            ) =>
+                (
+                    a.mapPosition ||
+                    999
+                ) -
+                (
+                    b.mapPosition ||
+                    999
+                )
+        );
+
+    const pageSize =
+        10;
+
+    const totalPages =
+        Math.max(
+            1,
+            Math.ceil(
+                opponents.length /
+                pageSize
+            )
+        );
+
+    const safePage =
+        Math.min(
+            Math.max(
+                Number(page) || 0,
+                0
+            ),
+            totalPages - 1
+        );
+
+    const visible =
+        opponents.slice(
+            safePage * pageSize,
+            (safePage + 1) *
+                pageSize
+        );
+
+    const lines =
+        visible.map(
+            member => {
+
+                const target =
+                    getTargetStatus(
+                        targets,
+                        member.mapPosition
+                    );
+
+                let status =
+                    "🟢 Available";
+
+                if (
+                    target?.status ===
+                    "claimed"
+                ) {
+
+                    status =
+                        `🎯 **Claimed by ${target.claimedByName}**`;
+
+                } else if (
+                    target?.status ===
+                    "completed"
+                ) {
+
+                    status =
+                        `✅ **${target.resultStars}⭐ • ${target.resultDestruction}%**`;
+                }
+
+                return (
+                    `**#${member.mapPosition}** ` +
+                    `TH${member.townHallLevel || "?"} ` +
+                    `**${member.name}**\n` +
+                    `${status}`
+                );
+            }
+        );
+
+    return baseEmbed()
+
+        .setColor(
+            WHITEOUT_COLOR
+        )
+
+        .setTitle(
+            "🎯 WHITEOUT WAR TARGET PLAN"
+        )
+
+        .setDescription(
+            `**${war.clan.name}** vs **${war.opponent.name}**\n\n` +
+            (lines.join("\n\n") ||
+                "No enemy targets available.")
+        )
+
+        .setFooter({
+            text:
+                `Page ${safePage + 1}/${totalPages} • Claim a target before attacking`
+        });
+}
+
+function buildPlanButtons(
+    page,
+    totalPages,
+    targets,
+    visibleTargets
+) {
+
+    const rows = [];
+
+    for (
+        let i = 0;
+        i < visibleTargets.length;
+        i += 5
+    ) {
+
+        const row =
+            new ActionRowBuilder();
+
+        const chunk =
+            visibleTargets.slice(
+                i,
+                i + 5
+            );
+
+        for (
+            const member of chunk
+        ) {
+
+            const target =
+                getTargetStatus(
+                    targets,
+                    member.mapPosition
+                );
+
+            if (
+                target?.status ===
+                "completed"
+            ) {
+                continue;
+            }
+
+            if (
+                target?.status ===
+                "claimed"
+            ) {
+
+                row.addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `whiteout:war:release:${member.mapPosition}`
+                        )
+                        .setLabel(
+                            `Release #${member.mapPosition}`
+                        )
+                        .setStyle(
+                            ButtonStyle.Secondary
+                        )
+                );
+
+            } else {
+
+                row.addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            `whiteout:war:claim:${member.mapPosition}`
+                        )
+                        .setLabel(
+                            `Claim #${member.mapPosition}`
+                        )
+                        .setStyle(
+                            ButtonStyle.Primary
+                        )
+                );
+            }
+        }
+
+        if (
+            row.components.length
+        ) {
+            rows.push(row);
+        }
+
+        if (
+            rows.length >= 4
+        ) {
+            break;
+        }
+    }
+
+    const navigation =
+        new ActionRowBuilder()
+            .addComponents(
+
+                new ButtonBuilder()
+                    .setCustomId(
+                        `whiteout:war:plan:${Math.max(0, page - 1)}`
+                    )
+                    .setLabel(
+                        "Previous"
+                    )
+                    .setStyle(
+                        ButtonStyle.Secondary
+                    )
+                    .setDisabled(
+                        page <= 0
+                    ),
+
+                new ButtonBuilder()
+                    .setCustomId(
+                        "whiteout:war:plan-refresh"
+                    )
+                    .setLabel(
+                        "Refresh"
+                    )
+                    .setEmoji(
+                        "🔄"
+                    )
+                    .setStyle(
+                        ButtonStyle.Primary
+                    ),
+
+                new ButtonBuilder()
+                    .setCustomId(
+                        `whiteout:war:plan:${page + 1}`
+                    )
+                    .setLabel(
+                        "Next"
+                    )
+                    .setStyle(
+                        ButtonStyle.Secondary
+                    )
+                    .setDisabled(
+                        page >=
+                        totalPages - 1
+                    )
+            );
+
+    rows.push(
+        navigation
+    );
+
+    return rows;
+}
+
+async function showWarPlan(
+    interaction,
+    page = 0
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    if (
+        war.state ===
+        "notInWar"
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "Whiteout is not currently in a war."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    const targets =
+        await getWarTargets(
+            war
+        );
+
+    const opponents =
+        war.opponent?.members ||
+        [];
+
+    const pageSize =
+        10;
+
+    const totalPages =
+        Math.max(
+            1,
+            Math.ceil(
+                opponents.length /
+                pageSize
+            )
+        );
+
+    const safePage =
+        Math.min(
+            Math.max(
+                Number(page) || 0,
+                0
+            ),
+            totalPages - 1
+        );
+
+    const visible =
+        opponents.slice(
+            safePage * pageSize,
+            (safePage + 1) *
+                pageSize
+        );
+
+    return interaction.reply({
+
+        embeds: [
+            buildWarPlanEmbed(
+                war,
+                targets,
+                safePage
+            )
+        ],
+
+        components:
+            buildPlanButtons(
+                safePage,
+                totalPages,
+                targets,
+                visible
+            ),
+
+        ephemeral:
+            true
+    });
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Claim Target
+|--------------------------------------------------------------------------
+*/
+async function claimTarget(
+    interaction,
+    mapPosition
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    if (
+        war.state ===
+        "notInWar"
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "There is no active war."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    const target =
+        getTargetMember(
+            war,
+            mapPosition
+        );
+
+    if (!target) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    `Enemy target #${mapPosition} does not exist.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    try {
+
+        await claimWarTarget(
+            war,
+            mapPosition,
+            interaction.user
+        );
+
+        return interaction.reply({
+
+            embeds: [
+                successEmbed(
+                    `🎯 Target **#${mapPosition} — ${target.name}** is now claimed by **${interaction.user.globalName || interaction.user.username}**.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+
+    } catch (error) {
+
+        return interaction.reply({
+
+            embeds: [
+                errorEmbed(
+                    error.message
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Release Target
+|--------------------------------------------------------------------------
+*/
+
+async function releaseTarget(
+    interaction,
+    mapPosition
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    try {
+
+        await releaseWarTarget(
+            war,
+            mapPosition,
+            interaction.user.id,
+            false
+        );
+
+        return interaction.reply({
+
+            embeds: [
+                successEmbed(
+                    `🔓 Target **#${mapPosition}** has been released.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+
+    } catch (error) {
+
+        return interaction.reply({
+
+            embeds: [
+                errorEmbed(
+                    error.message
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Attack Result Modal
+|--------------------------------------------------------------------------
+*/
+
+async function showAttackResultModal(
+    interaction,
+    mapPosition
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    const target =
+        await getWarTarget(
+            war,
+            mapPosition
+        );
+
+    if (!target) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "That target has not been claimed."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    if (
+        target.claimedById !==
+        interaction.user.id
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "Only the member who claimed this target can record its result."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    if (
+        target.status ===
+        "completed"
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                warningEmbed(
+                    "This target already has a recorded result."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    const modal =
+        new ModalBuilder()
+            .setCustomId(
+                `whiteout:war:result:${mapPosition}`
+            )
+            .setTitle(
+                `Attack Result — Target #${mapPosition}`
+            );
+
+    const stars =
+        new TextInputBuilder()
+            .setCustomId(
+                "stars"
+            )
+            .setLabel(
+                "Stars earned (0-3)"
+            )
+            .setStyle(
+                TextInputStyle.Short
+            )
+            .setPlaceholder(
+                "Example: 3"
+            )
+            .setRequired(
+                true
+            )
+            .setMaxLength(
+                1
+            );
+
+    const destruction =
+        new TextInputBuilder()
+            .setCustomId(
+                "destruction"
+            )
+            .setLabel(
+                "Destruction percentage (0-100)"
+            )
+            .setStyle(
+                TextInputStyle.Short
+            )
+            .setPlaceholder(
+                "Example: 100"
+            )
+            .setRequired(
+                true
+            )
+            .setMaxLength(
+                3
+            );
+
+    modal.addComponents(
+
+        new ActionRowBuilder()
+            .addComponents(
+                stars
+            ),
+
+        new ActionRowBuilder()
+            .addComponents(
+                destruction
+            )
+    );
+
+    return interaction.showModal(
+        modal
+    );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Save Attack Result
+|--------------------------------------------------------------------------
+*/
+
+async function handleAttackResult(
+    interaction,
+    mapPosition
+) {
+
+    const stars =
+        Number(
+            interaction.fields.getTextInputValue(
+                "stars"
+            )
+        );
+
+    const destruction =
+        Number(
+            interaction.fields.getTextInputValue(
+                "destruction"
+            )
+        );
+
+    if (
+        !Number.isInteger(
+            stars
+        ) ||
+        stars < 0 ||
+        stars > 3
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "Stars must be a whole number from 0 to 3."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    if (
+        !Number.isFinite(
+            destruction
+        ) ||
+        destruction < 0 ||
+        destruction > 100
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "Destruction must be between 0 and 100."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    try {
+
+        const result =
+            await saveWarAttackResult(
+                war,
+                mapPosition,
+                {
+                    discordUserId:
+                        interaction.user.id,
+
+                    discordUserName:
+                        interaction.user.globalName ||
+                        interaction.user.username,
+
+                    stars,
+
+                    destructionPercentage:
+                        destruction
+                }
+            );
+
+        return interaction.reply({
+
+            embeds: [
+                successEmbed(
+                    `⚔️ Attack recorded against **target #${mapPosition}**.\n\n` +
+                    `⭐ **${result.stars} stars**\n` +
+                    `💥 **${result.destructionPercentage}% destruction**`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+
+    } catch (error) {
+
+        return interaction.reply({
+
+            embeds: [
+                errorEmbed(
+                    error.message
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Admin Assignment
+|--------------------------------------------------------------------------
+*/
+async function assignTargetFromCommand(
+    interaction,
+    mapPosition,
+    member
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    if (
+        war.state ===
+        "notInWar"
+    ) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    "There is no active war."
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    const target =
+        getTargetMember(
+            war,
+            mapPosition
+        );
+
+    if (!target) {
+
+        return interaction.reply({
+            embeds: [
+                errorEmbed(
+                    `Enemy target #${mapPosition} does not exist.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+
+    try {
+
+        await assignWarTarget(
+            war,
+            mapPosition,
+            member.id,
+            member.globalName ||
+            member.username
+        );
+
+        return interaction.reply({
+
+            embeds: [
+                successEmbed(
+                    `🎯 Assigned **#${mapPosition} — ${target.name}** to **${member.globalName || member.username}**.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+
+    } catch (error) {
+
+        return interaction.reply({
+
+            embeds: [
+                errorEmbed(
+                    error.message
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+}
+
+async function unassignTargetFromCommand(
+    interaction,
+    mapPosition
+) {
+
+    const war =
+        await getLiveWar({
+            force: true
+        });
+
+    try {
+
+        await releaseWarTarget(
+            war,
+            mapPosition,
+            interaction.user.id,
+            true
+        );
+
+        return interaction.reply({
+
+            embeds: [
+                successEmbed(
+                    `🔓 Target **#${mapPosition}** has been unassigned by an administrator.`
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+
+    } catch (error) {
+
+        return interaction.reply({
+
+            embeds: [
+                errorEmbed(
+                    error.message
+                )
+            ],
+
+            ephemeral:
+                true
+        });
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| History
+|--------------------------------------------------------------------------
+*/
 async function showWarHistory(
     interaction
 ) {
+
     const history =
         await getRecentWarHistory(
             10
         );
 
     if (!history.length) {
+
         return interaction.reply({
             embeds: [
                 errorEmbed(
                     "No stored Whiteout war history is available yet."
                 )
             ],
-            ephemeral: true
+
+            ephemeral:
+                true
         });
     }
 
@@ -816,12 +1935,14 @@ async function showWarHistory(
 
                 const clanStars =
                     Number(
-                        clan.stars || 0
+                        clan.stars ||
+                        0
                     );
 
                 const opponentStars =
                     Number(
-                        opponent.stars || 0
+                        opponent.stars ||
+                        0
                     );
 
                 let result =
@@ -849,18 +1970,17 @@ async function showWarHistory(
                         : "Unknown";
 
                 return (
-                    `**${index + 1}.** ` +
-                    `${result} — ` +
-                    `**${clan.name || "Whiteout"}** ` +
-                    `vs ` +
-                    `**${opponent.name || "Opponent"}** ` +
-                    `— ${clanStars}-${opponentStars} ` +
-                    `— ${endTime}`
+                    `**${index + 1}.** ${result} — ` +
+                    `**${clan.name || "Whiteout"}** vs ` +
+                    `**${opponent.name || "Opponent"}** — ` +
+                    `${clanStars}-${opponentStars} — ` +
+                    `${endTime}`
                 );
             }
         );
 
     return interaction.reply({
+
         embeds: [
             baseEmbed()
                 .setTitle(
@@ -870,23 +1990,26 @@ async function showWarHistory(
                     lines.join("\n")
                 )
         ],
-        ephemeral: true
+
+        ephemeral:
+            true
     });
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| Automatic Refresh
+|--------------------------------------------------------------------------
+*/
 async function initializeWarSystem() {
 
     if (refreshTimer) {
+
         clearInterval(
             refreshTimer
         );
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Automatic live war refresh
-    |--------------------------------------------------------------------------
-    */
 
     refreshTimer =
         setInterval(
@@ -910,15 +2033,10 @@ async function initializeWarSystem() {
     if (
         typeof refreshTimer.unref ===
         "function"
-    ){
+    ) {
+
         refreshTimer.unref();
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Initial API fetch
-    |--------------------------------------------------------------------------
-    */
 
     try {
 
@@ -940,14 +2058,52 @@ function getLastWarError() {
     return lastWarError;
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| Exports
+|--------------------------------------------------------------------------
+*/
+
 module.exports = {
+
     initializeWarSystem,
+
     getLiveWar,
+
     showCurrentWar,
+
     showMemberStatus,
+
     showWarHistory,
+
+    showWarPlan,
+
+    claimTarget,
+
+    releaseTarget,
+
+    showAttackResultModal,
+
+    handleAttackResult,
+
+    assignTargetFromCommand,
+
+    unassignTargetFromCommand,
+
     buildCurrentWarEmbed,
+
     buildMemberStatusEmbed,
+
+    buildWarPlanEmbed,
+
     formatTimeRemaining,
-    getLastWarError
+
+    getLastWarError,
+
+    getWarAttackHistory
 };
+
+            1,
+            Math.ceil(
+            
