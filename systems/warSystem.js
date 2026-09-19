@@ -2103,7 +2103,3 @@ module.exports = {
 
     getWarAttackHistory
 };
-
-            1,
-            Math.ceil(
-            
