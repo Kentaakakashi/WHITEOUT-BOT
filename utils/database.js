@@ -36,7 +36,6 @@ async function initializeDatabase() {
         });
 
         db = admin.firestore();
-
         initialized = true;
 
         logger.info("Firebase / Firestore initialized.");
@@ -88,7 +87,8 @@ async function setGuildSettings(guildId, data) {
         .set(
             {
                 ...data,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updatedAt:
+                    admin.firestore.FieldValue.serverTimestamp()
             },
             {
                 merge: true
@@ -98,7 +98,7 @@ async function setGuildSettings(guildId, data) {
 
 /*
 |--------------------------------------------------------------------------
-| Player Linking
+| Player Links
 |--------------------------------------------------------------------------
 */
 
@@ -126,7 +126,8 @@ async function setPlayerLink(discordUserId, data) {
         .set(
             {
                 ...data,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updatedAt:
+                    admin.firestore.FieldValue.serverTimestamp()
             },
             {
                 merge: true
@@ -134,9 +135,134 @@ async function setPlayerLink(discordUserId, data) {
         );
 }
 
+async function removePlayerLink(discordUserId) {
+    const database = getDatabase();
+
+    await database
+        .collection("playerLinks")
+        .doc(discordUserId)
+        .delete();
+}
+
 /*
 |--------------------------------------------------------------------------
-| Logging
+| Player Data
+|--------------------------------------------------------------------------
+*/
+
+async function savePlayerSnapshot(player) {
+    const database = getDatabase();
+
+    const tag = player.tag.replace("#", "");
+
+    await database
+        .collection("players")
+        .doc(tag)
+        .set(
+            {
+                ...player,
+                lastUpdated:
+                    admin.firestore.FieldValue.serverTimestamp()
+            },
+            {
+                merge: true
+            }
+        );
+}
+
+async function getPlayerSnapshot(playerTag) {
+    const database = getDatabase();
+
+    const tag = playerTag.replace("#", "").toUpperCase();
+
+    const snapshot = await database
+        .collection("players")
+        .doc(tag)
+        .get();
+
+    if (!snapshot.exists) {
+        return null;
+    }
+
+    return snapshot.data();
+}
+
+/*
+|--------------------------------------------------------------------------
+| Clan Data
+|--------------------------------------------------------------------------
+*/
+
+async function saveClanSnapshot(clan) {
+    const database = getDatabase();
+
+    const tag = clan.tag.replace("#", "");
+
+    await database
+        .collection("clans")
+        .doc(tag)
+        .set(
+            {
+                ...clan,
+                lastUpdated:
+                    admin.firestore.FieldValue.serverTimestamp()
+            },
+            {
+                merge: true
+            }
+        );
+}
+
+async function getClanSnapshot(clanTag) {
+    const database = getDatabase();
+
+    const tag = clanTag.replace("#", "").toUpperCase();
+
+    const snapshot = await database
+        .collection("clans")
+        .doc(tag)
+        .get();
+
+    if (!snapshot.exists) {
+        return null;
+    }
+
+    return snapshot.data();
+}
+
+/*
+|--------------------------------------------------------------------------
+| Dashboard
+|--------------------------------------------------------------------------
+*/
+
+async function saveDashboard(guildId, data) {
+    const database = getDatabase();
+
+    await database
+        .collection("guilds")
+        .doc(guildId)
+        .set(
+            {
+                dashboard: data,
+                updatedAt:
+                    admin.firestore.FieldValue.serverTimestamp()
+            },
+            {
+                merge: true
+            }
+        );
+}
+
+async function getDashboard(guildId) {
+    const settings = await getGuildSettings(guildId);
+
+    return settings?.dashboard || null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Logs
 |--------------------------------------------------------------------------
 */
 
@@ -150,7 +276,8 @@ async function writeLog(guildId, type, data = {}) {
         .add({
             type,
             ...data,
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
+            createdAt:
+                admin.firestore.FieldValue.serverTimestamp()
         });
 }
 
@@ -158,9 +285,22 @@ module.exports = {
     admin,
     initializeDatabase,
     getDatabase,
+
     getGuildSettings,
     setGuildSettings,
+
     getPlayerLink,
     setPlayerLink,
+    removePlayerLink,
+
+    savePlayerSnapshot,
+    getPlayerSnapshot,
+
+    saveClanSnapshot,
+    getClanSnapshot,
+
+    saveDashboard,
+    getDashboard,
+
     writeLog
 };
