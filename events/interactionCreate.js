@@ -933,6 +933,4 @@ function buildPlanButtonsLocal(
 
     return rows;
 }
-                1,
-                Math.ceil(
-           
+               
