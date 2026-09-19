@@ -2,14 +2,51 @@ require("dotenv").config();
 
 const fs = require("fs");
 const path = require("path");
+
 const {
     Client,
     Collection,
     GatewayIntentBits
 } = require("discord.js");
 
-const { initializeDatabase } = require("./utils/database");
-const logger = require("./utils/logger");
+const {
+    initializeDatabase
+} = require("./utils/database");
+
+const logger =
+    require("./utils/logger");
+
+const {
+    initializeWarSystem
+} = require("./systems/warSystem");
+
+const {
+    initializeCwlSystem
+} = require("./systems/cwlSystem");
+
+const {
+    initializeCapitalSystem
+} = require("./systems/capitalSystem");
+
+const {
+    initializeDonationSystem
+} = require("./systems/donationSystem");
+
+const {
+    initializeAchievementSystem
+} = require("./systems/achievementSystem");
+
+const {
+    initializeRankingSystem
+} = require("./systems/rankingSystem");
+
+const {
+    initializeNotificationSystem
+} = require("./systems/notificationSystem");
+
+const {
+    initializeInactivitySystem
+} = require("./systems/inactivitySystem");
 
 const client = new Client({
     intents: [
@@ -18,7 +55,8 @@ const client = new Client({
     ]
 });
 
-client.commands = new Collection();
+client.commands =
+    new Collection();
 
 /*
 |--------------------------------------------------------------------------
@@ -31,15 +69,26 @@ function loadCommands(directory) {
         return;
     }
 
-    const entries = fs.readdirSync(directory, {
-        withFileTypes: true
-    });
+    const entries =
+        fs.readdirSync(
+            directory,
+            {
+                withFileTypes: true
+            }
+        );
 
     for (const entry of entries) {
-        const fullPath = path.join(directory, entry.name);
+        const fullPath =
+            path.join(
+                directory,
+                entry.name
+            );
 
         if (entry.isDirectory()) {
-            loadCommands(fullPath);
+            loadCommands(
+                fullPath
+            );
+
             continue;
         }
 
@@ -48,18 +97,33 @@ function loadCommands(directory) {
         }
 
         try {
-            const command = require(fullPath);
+            const command =
+                require(fullPath);
 
-            if (!command.data || !command.execute) {
-                logger.warn(`Skipped invalid command: ${fullPath}`);
+            if (
+                !command.data ||
+                !command.execute
+            ) {
+                logger.warn(
+                    `Skipped invalid command: ${fullPath}`
+                );
+
                 continue;
             }
 
-            client.commands.set(command.data.name, command);
+            client.commands.set(
+                command.data.name,
+                command
+            );
 
-            logger.info(`Loaded command: /${command.data.name}`);
+            logger.info(
+                `Loaded command: /${command.data.name}`
+            );
         } catch (error) {
-            logger.error(`Failed loading command: ${fullPath}`);
+            logger.error(
+                `Failed loading command: ${fullPath}`
+            );
+
             logger.error(error);
         }
     }
@@ -76,39 +140,108 @@ function loadEvents(directory) {
         return;
     }
 
-    const files = fs.readdirSync(directory);
+    const files =
+        fs.readdirSync(
+            directory
+        );
 
     for (const file of files) {
         if (!file.endsWith(".js")) {
             continue;
         }
 
-        const fullPath = path.join(directory, file);
+        const fullPath =
+            path.join(
+                directory,
+                file
+            );
 
         try {
-            const event = require(fullPath);
+            const event =
+                require(fullPath);
 
-            if (!event.name || !event.execute) {
-                logger.warn(`Skipped invalid event: ${fullPath}`);
+            if (
+                !event.name ||
+                !event.execute
+            ) {
+                logger.warn(
+                    `Skipped invalid event: ${fullPath}`
+                );
+
                 continue;
             }
 
             if (event.once) {
-                client.once(event.name, (...args) => {
-                    event.execute(...args, client);
-                });
+                client.once(
+                    event.name,
+                    (...args) =>
+                        event.execute(
+                            ...args,
+                            client
+                        )
+                );
             } else {
-                client.on(event.name, (...args) => {
-                    event.execute(...args, client);
-                });
+                client.on(
+                    event.name,
+                    (...args) =>
+                        event.execute(
+                            ...args,
+                            client
+                        )
+                );
             }
 
-            logger.info(`Loaded event: ${event.name}`);
+            logger.info(
+                `Loaded event: ${event.name}`
+            );
         } catch (error) {
-            logger.error(`Failed loading event: ${fullPath}`);
+            logger.error(
+                `Failed loading event: ${fullPath}`
+            );
+
             logger.error(error);
         }
     }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Initialize Systems
+|--------------------------------------------------------------------------
+*/
+
+async function initializeSystems() {
+    await initializeWarSystem(
+        client
+    );
+
+    await initializeCwlSystem(
+        client
+    );
+
+    await initializeCapitalSystem(
+        client
+    );
+
+    await initializeDonationSystem(
+        client
+    );
+
+    await initializeAchievementSystem(
+        client
+    );
+
+    await initializeRankingSystem(
+        client
+    );
+
+    await initializeNotificationSystem(
+        client
+    );
+
+    await initializeInactivitySystem(
+        client
+    );
 }
 
 /*
@@ -119,20 +252,42 @@ function loadEvents(directory) {
 
 async function start() {
     try {
-        logger.info("Starting WHITEOUT BOT...");
+        logger.info(
+            "Starting WHITEOUT BOT..."
+        );
 
-        loadCommands(path.join(__dirname, "commands"));
-        loadEvents(path.join(__dirname, "events"));
+        loadCommands(
+            path.join(
+                __dirname,
+                "commands"
+            )
+        );
+
+        loadEvents(
+            path.join(
+                __dirname,
+                "events"
+            )
+        );
 
         await initializeDatabase();
 
+        await initializeSystems();
+
         if (!process.env.DISCORD_TOKEN) {
-            throw new Error("DISCORD_TOKEN is missing.");
+            throw new Error(
+                "DISCORD_TOKEN is missing."
+            );
         }
 
-        await client.login(process.env.DISCORD_TOKEN);
+        await client.login(
+            process.env.DISCORD_TOKEN
+        );
     } catch (error) {
-        logger.error("Whiteout failed to start.");
+        logger.error(
+            "Whiteout failed to start."
+        );
+
         logger.error(error);
 
         process.exit(1);
