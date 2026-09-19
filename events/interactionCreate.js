@@ -313,8 +313,7 @@ module.exports = {
                     ) {
 
                         return interaction
-                            .message
-                            .edit({
+                            .editReply({
 
                                 embeds: [
                                     errorEmbed(
@@ -375,8 +374,7 @@ module.exports = {
                             );
 
                     return interaction
-                        .message
-                        .edit({
+                        .editReply({
 
                             embeds: [
                                 buildCurrentWarEmbed(
@@ -424,8 +422,7 @@ module.exports = {
                     ) {
 
                         return interaction
-                            .message
-                            .edit({
+                            .editReply({
 
                                 embeds: [
                                     errorEmbed(
@@ -510,8 +507,7 @@ module.exports = {
                             );
 
                     return interaction
-                        .message
-                        .edit({
+                        .editReply({
 
                             embeds: [
                                 buildMemberStatusEmbed(
@@ -681,8 +677,7 @@ async function showWarPlanAfterUpdate(
         ) {
 
             return interaction
-                .message
-                .edit({
+                .editReply({
 
                     embeds: [
                         errorEmbed(
@@ -755,8 +750,7 @@ async function showWarPlanAfterUpdate(
             );
 
         return interaction
-            .message
-            .edit({
+            .editReply({
 
                 embeds: [
                     embed
@@ -769,8 +763,7 @@ async function showWarPlanAfterUpdate(
     } catch (error) {
 
         return interaction
-            .message
-            .edit({
+            .editReply({
 
                 embeds: [
                     errorEmbed(
@@ -933,4 +926,3 @@ function buildPlanButtonsLocal(
 
     return rows;
 }
-               
